@@ -1,0 +1,77 @@
+---
+ER Diagram for Hungry Ninja API
+---
+
+erDiagram
+    Family ||--|{ FamilyMember : has
+    Family ||--o{ Recipe : manages
+    RecipePartGroup ||--o{ Instruction : contains
+    RecipePartGroup ||--o{ RecipeIngredient : contains
+    Recipe ||--o{ RecipeTag : has
+    Recipe ||--o{ RecipePartGroup : has
+    RecipeIngredient }o..o| Ingredient : "is a"
+    RecipeIngredient }o..o| Recipe : "is a"
+    RecipeTag }o..o| Tag : "is a"
+    Family ||--o{ Tag : manages
+    Family ||--o{ Ingredient : manages
+
+    Family {
+        int id PK
+        string name UK
+    }    
+
+    FamilyMember {
+        int id PK
+        string name
+        string auth_id UK
+        int family_id FK
+    }
+
+    Recipe {
+        int id PK
+        string name
+        string description
+        int servings
+        int family_id FK
+    }   
+
+    Ingredient {
+        int id PK
+        string name UK
+        int family_id FK        
+    }
+
+    Instruction {
+        int id PK
+        int order
+        string description
+        int group_id FK
+    }
+
+    Tag {
+        int id PK
+        string name UK
+        int family_id FK
+    }
+
+    RecipeIngredient {
+        int id PK
+        int order
+        float amount
+        string unit
+        int group_id FK
+        int ingredient_id FK "Ingredient can be a basic ingredient"
+        int linked_recipe_id FK "Ingredient can be another recipe"
+    }
+
+    RecipeTag {
+        int id PK
+        int recipe_id FK
+        int tag_id FK
+    }
+
+    RecipePartGroup {
+        int id PK
+        string name
+        int recipe_id FK
+    }
