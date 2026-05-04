@@ -2,7 +2,8 @@ from pydantic import BaseModel
 from typing import Optional
 
 
-class Ingredient(BaseModel):
+class IngredientDTO(BaseModel):
+    id: Optional[int] = None
     name: str
     amount: Optional[float] = None
     unit: Optional[str] = None

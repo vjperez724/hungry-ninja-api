@@ -12,6 +12,7 @@ from .instruction import Instruction
 from .recipe_ingredient import RecipeIngredient
 from .tag import Tag
 from .recipe_tag import RecipeTag
+from .recipe_part_group import RecipePartGroup
 
 
 engine = create_engine(os.environ.get("DATABASE_URL"))

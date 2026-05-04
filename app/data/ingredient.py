@@ -6,6 +6,6 @@ from .auditable_model import AuditableModel
 
 
 class Ingredient(AuditableModel, table=True):
-    name: str = Field(index=True, unique=True)
+    name: str = Field(index=True)
     family_id: int = Field(foreign_key="family.id")
 

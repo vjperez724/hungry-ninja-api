@@ -2,6 +2,6 @@ from pydantic import BaseModel
 from typing import Optional
 
 
-class Suggestion(BaseModel):
+class SuggestionDTO(BaseModel):
     suggestion: str
     reason: Optional[str] = None
