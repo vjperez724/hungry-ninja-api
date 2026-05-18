@@ -1,19 +1,19 @@
 # Data package for SQLModel models
-from fastapi import Depends
 import os
-from sqlmodel import SQLModel, Session, create_engine
 from typing import Annotated, Generator
 
-from .family_member import FamilyMember
-from .family import Family
-from .ingredient import Ingredient
-from .recipe import Recipe
-from .instruction import Instruction
-from .recipe_ingredient import RecipeIngredient
-from .tag import Tag
-from .recipe_tag import RecipeTag
-from .recipe_part_group import RecipePartGroup
+from fastapi import Depends
+from sqlmodel import Session, SQLModel, create_engine
 
+from .family import Family
+from .family_member import FamilyMember
+from .ingredient import Ingredient
+from .instruction import Instruction
+from .recipe import Recipe
+from .recipe_ingredient import RecipeIngredient
+from .recipe_part_group import RecipePartGroup
+from .recipe_tag import RecipeTag
+from .tag import Tag
 
 engine = create_engine(os.environ.get("DATABASE_URL"))
 
@@ -37,6 +37,7 @@ __all__ = [
     "Family",
     "Ingredient",
     "Recipe",
+    "RecipePartGroup",
     "Instruction",
     "RecipeIngredient",
     "Tag",
