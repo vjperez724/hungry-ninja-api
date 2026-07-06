@@ -2,7 +2,7 @@ import os
 
 import logfire
 from fastapi import Depends
-from pydantic_ai import Agent, Tool
+from pydantic_ai import Agent, RunContext, Tool
 from sqlalchemy.orm import joinedload
 from sqlmodel import desc, select
 
@@ -38,9 +38,6 @@ def _get_recipe_options():
 
 
 class RecipeService:
-    tag_suggestion_agent: Agent[None, list[SuggestionDTO]]
-    substitution_agent: Agent[None, list[SuggestionDTO]]
-
     def __init__(
         self,
         user: AuthUserDep,
@@ -50,41 +47,6 @@ class RecipeService:
         self.family_service = family_service
         self.session = session
         self.user = user
-        self.tag_suggestion_agent = Agent(
-            os.environ.get("LLM_MODEL"),
-            system_prompt=(
-                """
-                You are a recipe tagging assistant.  Your job is to analyze recipes and generate accurate, useful recipe tags.
-                Users may accept, reject, or just ignore your suggestions.
-
-                Rules:
-                - Return only relevant tags.
-                - Suggest up to 5 tags.
-                - Prefer common cooking terminology.
-                - Avoid duplicate or redundant tags.
-                - Try to use tags that are similar to top tags used by the user
-                - Try to avoid tags that are similar to bottom tags used by the user
-                - Consider recipe name, ingredients, and instructions.
-                - Give reasons for each tag suggestion, such as key ingredients or cooking techniques that justify the tag.
-                """
-            ),
-            output_type=list[SuggestionDTO],
-        )
-        self.substitution_agent = Agent(
-            os.environ.get("LLM_MODEL"),
-            system_prompt=(
-                "Suggest ingredient substitutions for recipes."
-                "Given a recipe and an ingredient name, return a list of suitable substitutions for that ingredient."
-                "Consider the flavor profile, texture, and cooking properties of the original ingredient when suggesting substitutions."
-                "Limit substitutions to a maximum of 5, and ensure they are relevant to the recipe.  You do not have to return all 5 suggestions."
-                "If a substitution is requested for an ingredient that is not a part of the recipe's ingredients, return an empty list."
-            ),
-            output_type=list[SuggestionDTO],
-            tools=[Tool(self.get_recipe, takes_ctx=False)],
-        )
-        logfire.instrument_pydantic_ai(self.tag_suggestion_agent)
-        logfire.instrument_pydantic_ai(self.tag_suggestion_agent_with_more_tools)
-        logfire.instrument_pydantic_ai(self.substitution_agent)
 
     async def create_recipe(self, new_recipe: RecipeDTO) -> RecipeDTO:
         # This needs improvement
@@ -267,14 +229,59 @@ class RecipeService:
         Frequently rejected tags:
         {bottom_tags}
         """
-        result = await self.tag_suggestion_agent.run(prompt)
+        result = await tag_suggestion_agent.run(prompt)
         await self._save_tag_suggestions(result.output, family_member.id)
         return result.output
 
     async def suggest_substitutions(
         self, recipe_id: int, ingredient_id: int
     ) -> list[SuggestionDTO]:
-        result = await self.substitution_agent.run(
-            f"Suggest substitutions for ingredient id: {ingredient_id} in recipe_id: {recipe_id}"
+        result = await substitution_agent.run(
+            f"Suggest substitutions for ingredient id: {ingredient_id} in recipe_id: {recipe_id}",
+            deps=self,
         )
         return result.output
+
+
+async def _get_recipe_tool(ctx: RunContext[RecipeService], recipe_id: int) -> RecipeDTO:
+    """Look up a recipe by id, scoped to the requesting user's family."""
+    return await ctx.deps.get_recipe(recipe_id)
+
+
+tag_suggestion_agent: Agent[None, list[SuggestionDTO]] = Agent(
+    os.environ.get("LLM_MODEL"),
+    system_prompt=(
+        """
+        You are a recipe tagging assistant.  Your job is to analyze recipes and generate accurate, useful recipe tags.
+        Users may accept, reject, or just ignore your suggestions.
+
+        Rules:
+        - Return only relevant tags.
+        - Suggest up to 5 tags.
+        - Prefer common cooking terminology.
+        - Avoid duplicate or redundant tags.
+        - Try to use tags that are similar to top tags used by the user
+        - Try to avoid tags that are similar to bottom tags used by the user
+        - Consider recipe name, ingredients, and instructions.
+        - Give reasons for each tag suggestion, such as key ingredients or cooking techniques that justify the tag.
+        """
+    ),
+    output_type=list[SuggestionDTO],
+)
+
+substitution_agent: Agent[RecipeService, list[SuggestionDTO]] = Agent(
+    os.environ.get("LLM_MODEL"),
+    deps_type=RecipeService,
+    system_prompt=(
+        "Suggest ingredient substitutions for recipes."
+        "Given a recipe and an ingredient name, return a list of suitable substitutions for that ingredient."
+        "Consider the flavor profile, texture, and cooking properties of the original ingredient when suggesting substitutions."
+        "Limit substitutions to a maximum of 5, and ensure they are relevant to the recipe.  You do not have to return all 5 suggestions."
+        "If a substitution is requested for an ingredient that is not a part of the recipe's ingredients, return an empty list."
+    ),
+    output_type=list[SuggestionDTO],
+    tools=[Tool(_get_recipe_tool, takes_ctx=True)],
+)
+
+logfire.instrument_pydantic_ai(tag_suggestion_agent)
+logfire.instrument_pydantic_ai(substitution_agent)
