@@ -6,7 +6,7 @@ from datetime import timezone
 
 class AuditableModel(SQLModel):
     id: int | None = Field(default=None, primary_key=True)
-    created_at: Optional[datetime] = Field(default=datetime.now(timezone.utc), nullable=False)
+    created_at: Optional[datetime] = Field(default_factory=lambda: datetime.now(timezone.utc), nullable=False)
     created_by: Optional[str] = Field(default=None)
     updated_at: Optional[datetime] = Field(default=None)    
     updated_by: Optional[str] = Field(default=None)

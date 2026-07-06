@@ -211,7 +211,7 @@ class RecipeService:
 
         recipe = self.session.exec(
             select(Recipe)
-            .where(Recipe.id == recipe_id and Recipe.family_id == family.id)
+            .where(Recipe.id == recipe_id, Recipe.family_id == family.id)
             .options(*_get_recipe_options())
         ).first()
         if not recipe:
@@ -220,43 +220,32 @@ class RecipeService:
         recipe_dto = to_recipe_dto(recipe)
         return recipe_dto
 
-    async def _get_top_tags(self, family_member_id: int) -> list[str]:
-        top_tags = self.session.exec(
+    async def _get_tags_by_acceptance(
+        self, family_member_id: int, descending: bool
+    ) -> list[str]:
+        acceptance_ratio = SuggestedTagHistory.times_accepted / (
+            SuggestedTagHistory.times_accepted + SuggestedTagHistory.times_rejected
+        )
+        tags = self.session.exec(
             select(SuggestedTagHistory)
             .where(
                 SuggestedTagHistory.family_member_id == family_member_id,
             )
             .limit(5)
             .order_by(
-                desc(
-                    SuggestedTagHistory.times_accepted
-                    / (
-                        SuggestedTagHistory.times_accepted
-                        + SuggestedTagHistory.times_rejected
-                    ),
-                ),
-                SuggestedTagHistory.times_suggested,  # pyright: ignore[reportArgumentType]
+                desc(acceptance_ratio) if descending else acceptance_ratio,  # pyright: ignore[reportArgumentType]
+                SuggestedTagHistory.times_suggested  # pyright: ignore[reportArgumentType]
+                if descending
+                else desc(SuggestedTagHistory.times_suggested),  # pyright: ignore[reportArgumentType]
             )
         ).all()
-        return [tag.tag for tag in top_tags]
+        return [tag.tag for tag in tags]
+
+    async def _get_top_tags(self, family_member_id: int) -> list[str]:
+        return await self._get_tags_by_acceptance(family_member_id, descending=True)
 
     async def _get_bottom_tags(self, family_member_id: int) -> list[str]:
-        bottom_tags = self.session.exec(
-            select(SuggestedTagHistory)
-            .where(
-                SuggestedTagHistory.family_member_id == family_member_id,
-            )
-            .limit(5)
-            .order_by(
-                SuggestedTagHistory.times_accepted
-                / (
-                    SuggestedTagHistory.times_accepted
-                    + SuggestedTagHistory.times_rejected
-                ),  # pyright: ignore[reportArgumentType]
-                desc(SuggestedTagHistory.times_suggested),  # pyright: ignore[reportArgumentType]
-            )
-        ).all()
-        return [tag.tag for tag in bottom_tags]
+        return await self._get_tags_by_acceptance(family_member_id, descending=False)
 
     async def _save_tag_suggestions(
         self, suggestions: list[SuggestionDTO], family_member_id: int
