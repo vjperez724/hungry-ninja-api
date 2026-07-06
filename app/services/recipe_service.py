@@ -1,9 +1,6 @@
 import os
-import sys
-from datetime import datetime, timezone
 
 import logfire
-import numpy as np
 from fastapi import Depends
 from pydantic_ai import Agent, Tool
 from sqlalchemy.orm import joinedload
@@ -43,7 +40,6 @@ def _get_recipe_options():
 class RecipeService:
     tag_suggestion_agent: Agent[None, list[SuggestionDTO]]
     substitution_agent: Agent[None, list[SuggestionDTO]]
-    tag_suggestion_agent_with_more_tools: Agent[None, list[SuggestionDTO]]
 
     def __init__(
         self,
@@ -54,32 +50,6 @@ class RecipeService:
         self.family_service = family_service
         self.session = session
         self.user = user
-        self.tag_suggestion_agent_with_more_tools = Agent(
-            os.environ.get("LLM_MODEL"),
-            system_prompt=(
-                """
-                You are a recipe tagging assistant.  Your job is to analyze recipes and generate accurate, useful recipe tags.
-                Users may accept, reject, or just ignore your suggestions.  You are provided tools to retrieve recipes, get top and bottom rated tags.
-                Recipe id and family member id (used for tag scoring) will be provided.
-
-                Rules:
-                - Return only relevant tags.
-                - Suggest up to 5 tags.
-                - Prefer common cooking terminology.
-                - Avoid duplicate or redundant tags.
-                - Try to use tags that are similar to top tags used by the user
-                - Try to avoid tags that are similar to bottom tags used by the user
-                - Consider recipe name, ingredients, and instructions.
-                - Give reasons for each tag suggestion, such as key ingredients or cooking techniques that justify the tag.
-                """
-            ),
-            output_type=list[SuggestionDTO],
-            tools=[
-                Tool(self.get_recipe),
-                Tool(self._get_top_tags),
-                Tool(self._get_bottom_tags),
-            ],
-        )
         self.tag_suggestion_agent = Agent(
             os.environ.get("LLM_MODEL"),
             system_prompt=(
