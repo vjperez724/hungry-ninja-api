@@ -2,6 +2,7 @@
 import os
 from typing import Annotated, Generator
 
+import logfire
 from fastapi import Depends
 from sqlmodel import Session, SQLModel, create_engine
 
@@ -13,6 +14,7 @@ from .recipe import Recipe
 from .recipe_ingredient import RecipeIngredient
 from .recipe_part_group import RecipePartGroup
 from .recipe_tag import RecipeTag
+from .suggested_tag_history import SuggestedTagHistory
 from .tag import Tag
 
 engine = create_engine(os.environ.get("DATABASE_URL"))
@@ -20,6 +22,7 @@ engine = create_engine(os.environ.get("DATABASE_URL"))
 
 def init_db():
     SQLModel.metadata.create_all(engine)
+    logfire.instrument_sqlalchemy(engine)
 
 
 def get_session() -> Generator[Session]:
@@ -42,4 +45,5 @@ __all__ = [
     "RecipeIngredient",
     "Tag",
     "RecipeTag",
+    "SuggestedTagHistory",
 ]

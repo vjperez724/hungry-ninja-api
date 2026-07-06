@@ -2,8 +2,8 @@ from fastapi import HTTPException
 from sqlmodel import select
 
 from app.auth import AuthUserDep
-from app.data import SessionDep, Family, FamilyMember
-from app.models import FamilyNewDTO, FamilyDTO, FamilyMemberDTO
+from app.data import Family, FamilyMember, SessionDep
+from app.models import FamilyDTO, FamilyMemberDTO, FamilyNewDTO
 from app.services.exceptions import DuplicateException
 
 
@@ -15,7 +15,7 @@ class FamilyService:
     async def create_family(self, new_family: FamilyNewDTO) -> FamilyDTO:
         # Check if user is already a member of a family
         existing_family = await self.get_family_by_auth_id()
-        if existing_family:            
+        if existing_family:
             raise DuplicateException("User is already a member of a family")
 
         # Create family
@@ -42,15 +42,30 @@ class FamilyService:
             members=[FamilyMemberDTO(id=family_member.id, name=family_member.name)],
         )
 
+    async def get_family_member_by_auth_id(self) -> FamilyMemberDTO | None:
+        family_member = self.session.exec(
+            select(FamilyMember).where(FamilyMember.auth_id == self.user.id)
+        ).first()
+        if family_member:
+            return FamilyMemberDTO(id=family_member.id, name=family_member.name)
+        return None
+
     async def get_family_by_auth_id(self) -> FamilyDTO | None:
         family = self.session.exec(
-            select(Family).join(FamilyMember).where(FamilyMember.auth_id == self.user.id)
+            select(Family)
+            .join(FamilyMember)
+            .where(FamilyMember.auth_id == self.user.id)
         ).first()
-        family_members = self.session.exec(
-            select(FamilyMember).where(FamilyMember.family_id == family.id)
-        ).all() if family else []
-        family_member_dtos = [FamilyMemberDTO(id=member.id, name=member.name) for member in family_members]
+        family_members = (
+            self.session.exec(
+                select(FamilyMember).where(FamilyMember.family_id == family.id)
+            ).all()
+            if family
+            else []
+        )
+        family_member_dtos = [
+            FamilyMemberDTO(id=member.id, name=member.name) for member in family_members
+        ]
         if family:
             return FamilyDTO(id=family.id, name=family.name, members=family_member_dtos)
         return None
-

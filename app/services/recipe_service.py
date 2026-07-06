@@ -1,7 +1,13 @@
+import os
+import sys
+from datetime import datetime, timezone
+
+import logfire
+import numpy as np
 from fastapi import Depends
 from pydantic_ai import Agent, Tool
 from sqlalchemy.orm import joinedload
-from sqlmodel import select
+from sqlmodel import desc, select
 
 from app.auth import AuthUserDep
 from app.data import (
@@ -11,6 +17,7 @@ from app.data import (
     RecipeIngredient,
     RecipePartGroup,
     SessionDep,
+    SuggestedTagHistory,
 )
 from app.mapping import to_recipe_dto
 from app.models import IngredientDTO, RecipeDTO, SuggestionDTO
@@ -36,6 +43,7 @@ def _get_recipe_options():
 class RecipeService:
     tag_suggestion_agent: Agent[None, list[SuggestionDTO]]
     substitution_agent: Agent[None, list[SuggestionDTO]]
+    tag_suggestion_agent_with_more_tools: Agent[None, list[SuggestionDTO]]
 
     def __init__(
         self,
@@ -43,21 +51,57 @@ class RecipeService:
         session: SessionDep,
         family_service: FamilyService = Depends(FamilyService),
     ):
-        self.tag_suggestion_agent = Agent(
-            "google-gla:gemini-3.1-flash-lite-preview",
+        self.family_service = family_service
+        self.session = session
+        self.user = user
+        self.tag_suggestion_agent_with_more_tools = Agent(
+            os.environ.get("LLM_MODEL"),
             system_prompt=(
-                "You are a helpful cooking assistant."
-                "Return a list of relevant tags based on included recipe's name, ingredients, and instructions."
-                "Limit tags to a maximum of 5, and ensure they are concise and relevant to the recipe.  You do not have to return all 5 tags."
-                "Give reasons for each tag suggestion, such as key ingredients or cooking techniques that justify the tag."
-                "Avoid returning similar tags, such as both 'quick and easy' and 'simple'."
-                "Avoid possibly controversial tags, such as using vegetarian on eggs."
+                """
+                You are a recipe tagging assistant.  Your job is to analyze recipes and generate accurate, useful recipe tags.
+                Users may accept, reject, or just ignore your suggestions.  You are provided tools to retrieve recipes, get top and bottom rated tags.
+                Recipe id and family member id (used for tag scoring) will be provided.
+
+                Rules:
+                - Return only relevant tags.
+                - Suggest up to 5 tags.
+                - Prefer common cooking terminology.
+                - Avoid duplicate or redundant tags.
+                - Try to use tags that are similar to top tags used by the user
+                - Try to avoid tags that are similar to bottom tags used by the user
+                - Consider recipe name, ingredients, and instructions.
+                - Give reasons for each tag suggestion, such as key ingredients or cooking techniques that justify the tag.
+                """
             ),
             output_type=list[SuggestionDTO],
-            tools=[Tool(self.get_recipe, takes_ctx=False)],
+            tools=[
+                Tool(self.get_recipe),
+                Tool(self._get_top_tags),
+                Tool(self._get_bottom_tags),
+            ],
+        )
+        self.tag_suggestion_agent = Agent(
+            os.environ.get("LLM_MODEL"),
+            system_prompt=(
+                """
+                You are a recipe tagging assistant.  Your job is to analyze recipes and generate accurate, useful recipe tags.
+                Users may accept, reject, or just ignore your suggestions.
+
+                Rules:
+                - Return only relevant tags.
+                - Suggest up to 5 tags.
+                - Prefer common cooking terminology.
+                - Avoid duplicate or redundant tags.
+                - Try to use tags that are similar to top tags used by the user
+                - Try to avoid tags that are similar to bottom tags used by the user
+                - Consider recipe name, ingredients, and instructions.
+                - Give reasons for each tag suggestion, such as key ingredients or cooking techniques that justify the tag.
+                """
+            ),
+            output_type=list[SuggestionDTO],
         )
         self.substitution_agent = Agent(
-            "google-gla:gemini-3.1-flash-lite-preview",
+            os.environ.get("LLM_MODEL"),
             system_prompt=(
                 "Suggest ingredient substitutions for recipes."
                 "Given a recipe and an ingredient name, return a list of suitable substitutions for that ingredient."
@@ -68,9 +112,9 @@ class RecipeService:
             output_type=list[SuggestionDTO],
             tools=[Tool(self.get_recipe, takes_ctx=False)],
         )
-        self.family_service = family_service
-        self.session = session
-        self.user = user
+        logfire.instrument_pydantic_ai(self.tag_suggestion_agent)
+        logfire.instrument_pydantic_ai(self.tag_suggestion_agent_with_more_tools)
+        logfire.instrument_pydantic_ai(self.substitution_agent)
 
     async def create_recipe(self, new_recipe: RecipeDTO) -> RecipeDTO:
         # This needs improvement
@@ -176,10 +220,96 @@ class RecipeService:
         recipe_dto = to_recipe_dto(recipe)
         return recipe_dto
 
+    async def _get_top_tags(self, family_member_id: int) -> list[str]:
+        top_tags = self.session.exec(
+            select(SuggestedTagHistory)
+            .where(
+                SuggestedTagHistory.family_member_id == family_member_id,
+            )
+            .limit(5)
+            .order_by(
+                desc(
+                    SuggestedTagHistory.times_accepted
+                    / (
+                        SuggestedTagHistory.times_accepted
+                        + SuggestedTagHistory.times_rejected
+                    ),
+                ),
+                SuggestedTagHistory.times_suggested,  # pyright: ignore[reportArgumentType]
+            )
+        ).all()
+        return [tag.tag for tag in top_tags]
+
+    async def _get_bottom_tags(self, family_member_id: int) -> list[str]:
+        bottom_tags = self.session.exec(
+            select(SuggestedTagHistory)
+            .where(
+                SuggestedTagHistory.family_member_id == family_member_id,
+            )
+            .limit(5)
+            .order_by(
+                SuggestedTagHistory.times_accepted
+                / (
+                    SuggestedTagHistory.times_accepted
+                    + SuggestedTagHistory.times_rejected
+                ),  # pyright: ignore[reportArgumentType]
+                desc(SuggestedTagHistory.times_suggested),  # pyright: ignore[reportArgumentType]
+            )
+        ).all()
+        return [tag.tag for tag in bottom_tags]
+
+    async def _save_tag_suggestions(
+        self, suggestions: list[SuggestionDTO], family_member_id: int
+    ):
+        # Get existing tags from db
+        suggested_tags = {tag.suggestion for tag in suggestions}
+        existing_tags = self.session.exec(
+            select(SuggestedTagHistory).where(
+                SuggestedTagHistory.tag.in_(suggested_tags),
+                SuggestedTagHistory.family_member_id == family_member_id,
+            )
+        ).all()
+
+        # For existing tags, increment times_suggested and attach id
+        # For new tags, save to database and attach id
+        for tag in suggestions:
+            for existing_tag in existing_tags:
+                if tag.suggestion == existing_tag.tag:
+                    tag.id = existing_tag.id
+                    existing_tag.times_suggested += 1
+                    break
+            else:
+                new_tag_history = SuggestedTagHistory(
+                    tag=tag.suggestion,
+                    family_member_id=family_member_id,
+                    created_by=self.user.id,
+                )
+                self.session.add(new_tag_history)
+                self.session.flush()
+                tag.id = new_tag_history.id
+
+        self.session.commit()
+        return suggestions
+
     async def suggest_tags(self, recipe_id: int) -> list[SuggestionDTO]:
-        result = await self.tag_suggestion_agent.run(
-            f"Suggest tags for recipe id: {recipe_id}"
-        )
+        family_member = await self.family_service.get_family_by_auth_id()
+        if not family_member:
+            raise UnauthorizedException("User does not belong to a family.")
+        recipe = await self.get_recipe(recipe_id)
+        top_tags = ", ".join(await self._get_top_tags(family_member.id))
+        bottom_tags = ", ".join(await self._get_bottom_tags(family_member.id))
+        prompt = f"""
+        Recipe:
+        {recipe}
+
+        Frequently accepted tags:
+        {top_tags}
+
+        Frequently rejected tags:
+        {bottom_tags}
+        """
+        result = await self.tag_suggestion_agent.run(prompt)
+        await self._save_tag_suggestions(result.output, family_member.id)
         return result.output
 
     async def suggest_substitutions(
