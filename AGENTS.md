@@ -37,6 +37,17 @@ Layered structure, each layer with its own package and an `__init__.py` that re-
 
 Recipes belong to a `Family` (multi-tenancy boundary — most queries filter by the caller's family, resolved via `FamilyService.get_family_by_auth_id()` from the authenticated user's `FamilyMember.auth_id`). A `Recipe` has one or more `RecipePartGroup`s (e.g. "dough", "filling") — this is how the API represents recipes with distinct components. Each group has ordered `Instruction`s and `RecipeIngredient`s; a `RecipeIngredient` points at either an `Ingredient` or another `Recipe` (`linked_recipe_id`, for sub-recipes/components). Tags (`Tag`, `RecipeTag`) are family-scoped. `SuggestedTagHistory` tracks per-family-member accept/reject counts for LLM-suggested tags, feeding future suggestions (see `RecipeService._get_top_tags` / `_get_bottom_tags`). See `er.mmd` for the full ER diagram.
 
+## Implementing a GitHub issue
+
+When asked to implement a GitHub issue, always:
+
+- Fetch the issue first and read it in full before writing any code.
+- All branches should be based on main.  Make sure main is up to date before starting work.
+- Follow all acceptance criteria.
+- If anything is ambiguous, ask rather than guess.
+- Use a new branch for development, following the pattern `<issue-number>-<issue-title>`.
+
 ### LLM-suggested tags/substitutions
 
 `RecipeService` builds three `pydantic_ai.Agent`s at construction time (tag suggestion, tag suggestion with tool access to top/bottom tag history, and ingredient substitution), all with `output_type=list[SuggestionDTO]`. Suggested tags are persisted to `SuggestedTagHistory` via `_save_tag_suggestions`, matching against existing tags for the same family member before creating new history rows. `ModelHTTPError` from `pydantic_ai` is caught in the routers and surfaced as a 503.
+
